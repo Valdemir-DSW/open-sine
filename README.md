@@ -7,6 +7,7 @@ link do EXE > https://drive.google.com/file/d/1T6f81fBp3s0M86bE14G4DmylEX_KXqMO/
 
 ||||||||||histórico de updates
 > 8/6/24 \ criação
+> 
 > 9/6/24  \ calibração para aproximação de valores
 
 * caso você tenha conhecimento com programação py e um pouco de áudio e gráficos e puder calibrar melhor o aplicativo poste a sua modificação nos problemas do github
