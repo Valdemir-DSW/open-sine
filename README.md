@@ -13,6 +13,8 @@ link do EXE > https://drive.google.com/file/d/1T6f81fBp3s0M86bE14G4DmylEX_KXqMO/
 * caso você tenha conhecimento com programação py e um pouco de áudio e gráficos e puder calibrar melhor o aplicativo poste a sua modificação nos problemas do github
 ||||||||||||||||||||||||||||||
 ![image](https://github.com/Valdemir-DSW/open-sine/assets/134114016/40b710b7-b35b-4855-b264-411a3617c5e7)
+![image](https://github.com/Valdemir-DSW/open-sine/assets/134114016/ddf1ebe7-20c2-4eb2-b03b-4c35b8ece17a)
+
 ![image](https://github.com/Valdemir-DSW/open-sine/assets/134114016/fb524bf6-f91b-449c-90a0-544f47ebbfe1)
 use para fazer medições de pequenas grandezas para medir grandezas maiores vai ter que caprichar no sistema de resistores e um sistema de proteção de sobretensão para que não passe de mais de um volt meio no p2
 injetar mais que 2 volts no P2 pode danificar a placa mae 
