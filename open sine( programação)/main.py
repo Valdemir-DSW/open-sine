@@ -1,328 +1,290 @@
-import pyaudio
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.animation as animation
-import threading
 import tkinter as tk
 from tkinter import ttk
-from tkinter import StringVar, messagebox, filedialog
+import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-import webbrowser
+import numpy as np
+import pyaudio
+import threading
+import time
+import json
 import os
-from PIL import Image  # Para trabalhar com imagens
+from sinal import GeradorFrequencias
+import webbrowser
+from PIL import Image, ImageTk
+class MicrophoneGraphApp:
+    def __init__(self, root):
+        def show_splash(root, image_path, duration):
+            if not os.path.exists(image_path):
+                print(f"Erro: O arquivo '{image_path}' não foi encontrado.")
+                root.destroy()
+                return
 
-# Configurações de áudio
-FORMAT = pyaudio.paInt16
-CHANNELS = 1
-RATE = 44100
-CHUNK = 512  # Tamanho do buffer
+            # Create splash window
+            splash = tk.Toplevel(root)
+            splash.overrideredirect(True)  # Remove window decorations
 
-# Inicializando PyAudio
-audio = pyaudio.PyAudio()
+            # Load and display image
+            image = Image.open(image_path)
+            photo = ImageTk.PhotoImage(image)
+            label = tk.Label(splash, image=photo)
+            label.image = photo  # Keep a reference to avoid garbage collection
+            label.pack()
 
-# Variáveis globais para armazenar dados de áudio e configurações de ganho
-audio_data = np.zeros(CHUNK)
-gain_base_map = {"1x": 1, "2x": 2, "3x": 3}  # Mapeamento de multiplicadores de ganho
-gain_base = 1  # Ganho base
-gain_fine = 0  # Ganho fino
-calibrate_gain = 0  # Calibração do ganho base
+            # Center the splash window
+            width, height = image.size
+            screen_width = splash.winfo_screenwidth()
+            screen_height = splash.winfo_screenheight()
+            x = (screen_width // 2) - (width // 2)
+            y = (screen_height // 2) - (height // 2)
+            splash.geometry(f'{width}x{height}+{x}+{y}')
 
-# Função para capturar áudio em uma thread separada
-def audio_capture():
-    global audio_data
-    stream = audio.open(format=FORMAT,
-                        channels=CHANNELS,
-                        rate=RATE,
-                        input=True,
-                        frames_per_buffer=CHUNK)
-    while True:
-        audio_data = np.frombuffer(stream.read(CHUNK), dtype=np.int16) * gain_base_map[gain_option.get()] * (1 + gain_fine) * (10 ** calibrate_gain)
+            # Destroy splash window after the specified duration
+            root.after(duration, splash.destroy)
+        
+        image_path = os.path.abspath("sine.png")
 
-# Função de atualização para o gráfico
-def update(frame):
-    global audio_data
-    line.set_ydata(audio_data)
+    # Show the splash screen
+        show_splash(root, image_path, 2444) 
+        
+        self.root = root
+        self.root.title("OPEN sine")
+        self.root.iconbitmap(os.path.abspath("sine.ico"))
+        
 
-    if extra_line_var.get():  # Verifica se a caixa de marcação está marcada
-        # Aplica um fator de ajuste para gerar a linha extra com a mesma sincronia e ganho
-        factor = 2  # Fator de ajuste para a linha extra (ajuste conforme necessário)
-        extra_line.set_ydata(audio_data * factor)  # Gera a linha extra baseada na linha principal com o fator de ajuste
-    else:
-        extra_line.set_ydata(np.zeros(CHUNK))  # Define a linha extra como zeros se a caixa de marcação não estiver marcada
+        # Configuração inicial do matplotlib
+        self.fig, self.ax = plt.subplots()
+        self.x = np.arange(0, 2000)
+        self.y_left = np.zeros(2000)
+        self.y_right = np.zeros(2000)
+        self.line_left, = self.ax.plot(self.x, self.y_left, label="Canal Esquerdo")
+        self.line_right, = self.ax.plot(self.x, self.y_right, label="Canal Direito", alpha=0.7)
+        self.ax.legend()
+        
 
-    # Atualiza o visor de amplitude
-    amplitude = np.max(np.abs(audio_data))  # Calcula a amplitude como o valor absoluto máximo
-    amplitude_var.set(amplitude)  # Atualiza o visor de amplitude
+        self.canvas = FigureCanvasTkAgg(self.fig, master=root)
+        self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
+        
 
-    # Atualiza o visor de tensão com base na relação configurada
-    update_tensao()
+        # Frame para os controles
+        control_frame = ttk.Frame(root)
+        self.wave_zoom_slider = tk.Scale(control_frame, from_=1, to=10, orient=tk.HORIZONTAL)
+        self.wave_zoom_slider.pack()
+        control_frame.pack(side=tk.TOP, fill=tk.X)
+        def helaa():
+            webbrowser.open(os.path.abspath("help.pdf"))
+            
+        
+        help = tk.Button(control_frame,text="Ajuda como calibrar - About",command=helaa)
+        help.pack()
+        
 
-    return line, extra_line
+        # Adicionar label e slider de ganho
+        self.gain = tk.DoubleVar(value=1.0)
+        self.gain_label = ttk.Label(control_frame, text="Zoom")
+        self.gain_label.pack(side=tk.LEFT, padx=5)
+        self.gain_slider = ttk.Scale(control_frame, from_=0.1, to=10.0, orient=tk.HORIZONTAL, variable=self.gain)
+        self.gain_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
 
+        # Adicionar slider de calibrar
+        self.calibration = tk.DoubleVar(value=1.0)
+        self.calibration_label = ttk.Label(control_frame, text="Calibragem")
+        self.calibration_label.pack(side=tk.LEFT, padx=5)
+        self.calibration_slider = ttk.Scale(control_frame, from_=-44, to=144, orient=tk.HORIZONTAL, variable=self.calibration)
+        self.calibration_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
 
-# Função para ajustar o ganho base
-def set_gain_base(event):
-    global gain_base
-    gain_base = gain_base_map[gain_option.get()]
-
-# Função para ajustar o ganho fino
-def set_gain_fine(value):
-    global gain_fine
-    gain_fine = float(value)
-
-# Função para calibrar o ganho base
-def set_calibrate_gain(value):
-    global calibrate_gain
-    calibrate_gain = round(float(value))
-
-    # Salvar a configuração ao fechar
-    with open("config.txt", "w") as file:
-        file.write(str(calibrate_gain))
-
-varfree = 1  # Inicialmente, o gráfico não está congelado
-
-def defreeze_graph():
-    global varfree
-    varfree = 1  # Marcar que o gráfico está descongelado
-    ani.event_source.start()
-    freeze_button.config(text="Congelar Gráfico", command=freeze_graph)
-
-def freeze_graph():
-    global varfree
-    varfree = 0  # Marcar que o gráfico está congelado
-    ani.event_source.stop()  # Pausar a animação
-    freeze_button.config(text="Descongelar Gráfico", command=defreeze_graph)
-
-    # Configurar o botão de congelar para descongelar quando pressionado
-    freeze_button.config(command=defreeze_graph)
-
-def export_png():
-    filename = tk.filedialog.asksaveasfilename(defaultextension=".png", filetypes=[("PNG files", "*.png")])
-    if filename:
-        fig.savefig(filename, format="png")
-        messagebox.showinfo("Exportar PNG", "Gráfico exportado como PNG com sucesso!")
-
-# Configuração da interface tk
-root = tk.Tk()
-root.title("open sine - By Valdemir")
-root.iconbitmap(os.path.abspath("sine.ico"))
-notebook = ttk.Notebook(root)
-notebook.pack(fill=tk.BOTH, expand=True)
-
-mainframe = ttk.Frame(notebook, padding="3 3 12 12")
-mainframe.pack(fill=tk.BOTH, expand=True)
-notebook.add(mainframe, text='Controle')
-
-settingsframe = ttk.Frame(notebook, padding="3 3 12 12")
-settingsframe.pack(fill=tk.BOTH, expand=True)
-notebook.add(settingsframe, text='Configurações')
-
-# Label e OptionMenu para o ganho base
-ttk.Label(mainframe, text="Ganho Base:").grid(column=1, row=1, sticky=tk.W)
-gain_option = tk.StringVar()
-gain_menu = ttk.Combobox(mainframe, textvariable=gain_option, values=["1x", "2x", "3x"])
-gain_menu.set("1x")
-gain_menu.grid(column=2, row=1, sticky=(tk.W, tk.E))
-gain_menu.bind("<<ComboboxSelected>>", set_gain_base)
-
-amplitude_var = tk.DoubleVar()
-amplitude_label = ttk.Label(mainframe, text="Amplitude:")
-amplitude_label.grid(column=1, row=5, sticky=tk.W)
-amplitude_display = ttk.Label(mainframe, textvariable=amplitude_var)
-amplitude_display.grid(column=2, row=5, sticky=tk.W)
-tensao_var = tk.DoubleVar()
-tensao_label = ttk.Label(mainframe, text="Tensão:")
-tensao_label.grid(column=1, row=6, sticky=tk.W)
-tensao_display = ttk.Label(mainframe, textvariable=tensao_var)
-tensao_display.grid(column=2, row=6, sticky=tk.W)
-
-
-def update_tensao():
-    amplitude = amplitude_var.get()  
-    relacao_str = relacao_var.get() 
-
-    # Verifica se a relação é um número válido antes de tentar a conversão
-    if relacao_str.replace(".", "", 1).isdigit() or relacao_str.replace("-", "", 1).isdigit():
-        relacao = float(relacao_str)  # Converte a relação para float
-        tensao = amplitude * relacao  # Calcula a tensão com base na relação
-
-        if amplitude < 0:
-            tensao *= -1
-
-        tensao_var.set(tensao)  
-    else:
-        tensao_var.set("N/A") 
+        # Dentro do método __init__ da classe MicrophoneGraphApp
+        
 
 
 
-relacao_label = ttk.Label(mainframe, text="Relação Amplitude-Tensão:")
-relacao_label.grid(column=1, row=7, sticky=tk.W)
-relacao_var = tk.StringVar(value="1")  # Valor padrão da relação
-relacao_entry = ttk.Entry(mainframe, textvariable=relacao_var)
-relacao_entry.grid(column=2, row=7, sticky=tk.W)
-relacao_entry.bind("<Return>", lambda event: update_tensao())  # Atualiza a tensão ao pressionar Enter
-# Label e Scale para o ganho fino
-ttk.Label(mainframe, text="Ganho Fino:").grid(column=1, row=2, sticky=tk.W)
-gain_scale_var = StringVar()
-gain_scale_var.set("0.0")
-gain_scale_label = ttk.Label(mainframe, textvariable=gain_scale_var)
-gain_scale_label.grid(column=3, row=2, sticky=(tk.W, tk.E))
-gain_scale = ttk.Scale(mainframe, orient=tk.HORIZONTAL, length=200, from_=0, to_=1, command=set_gain_fine, variable=gain_scale_var)
-gain_scale.grid(column=2, row=2, sticky=(tk.W, tk.E))
+        # Adicionar checkbutton para dividir canais
+        self.split_channels = tk.BooleanVar(value=False)
+        self.split_checkbutton = ttk.Checkbutton(control_frame, text="Dividir Canais (E/D)", variable=self.split_channels)
+        self.split_checkbutton.pack(side=tk.LEFT, padx=5)
 
-def update_calibrate_gain_value(value):
-    try:
-        float_value = float(value)
-        print(float_value)
-        calibrate_gain_value_label.config(text=f"Valor do Slide de Calibração: {float_value:.2f}")
-    except ValueError:
-        pass
-    print("erro")
-    save_config()
+        # Adicionar slider para separar as linhas
+        self.offset = tk.DoubleVar(value=0.0)
+        self.offset_label = ttk.Label(control_frame, text="Separação das Linhas")
+        self.offset_label.pack(side=tk.LEFT, padx=5)
+        self.offset_slider = ttk.Scale(control_frame, from_=0, to=32767, orient=tk.HORIZONTAL, variable=self.offset)
+        self.offset_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+
+        # Adicionar slider para taxa de atualização
+        self.update_interval = tk.DoubleVar(value=0.1)
+        self.update_label = ttk.Label(control_frame, text="Tempo de Atualização (s)")
+        self.update_label.pack(side=tk.LEFT, padx=5)
+        self.update_slider = ttk.Scale(control_frame, from_=0.01, to=1.0, orient=tk.HORIZONTAL, variable=self.update_interval)
+        self.update_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+
+        # Adicionar botão de pausa/despausa
+        self.paused = tk.BooleanVar(value=False)
+        self.pause_button = ttk.Button(control_frame, text="Pausar", command=self.toggle_pause)
+        self.pause_button.pack(side=tk.LEFT, padx=5)
+
+        # Adicionar Checkbutton para exibir/ocultar grade
+        self.show_grid = tk.BooleanVar(value=False)
+        self.grid_checkbutton = ttk.Checkbutton(control_frame, text="Mostrar Grade", variable=self.show_grid, command=self.toggle_grid)
+        self.grid_checkbutton.pack(side=tk.LEFT, padx=5)
+        self.helpgg = ttk.Button(control_frame,text="Gerador de frequência",command=self.abrir_gerador)
+        self.helpgg.pack()
+
+        # Adicionar Listbox para mostrar posições dos sliders e informações de frequência e nível
+        self.update_listbox = tk.Listbox(root, height=10, width=50)
+        self.update_listbox.pack(side=tk.RIGHT, padx=5, fill=tk.Y)
+        # Dentro do método __init__ da classe MicrophoneGraphApp
+        self.wave_zoom_slider.bind("<ButtonRelease-1>", lambda event: self.update_wave_zoom())
+
+
+        # Iniciar thread de áudio
+        self.stream = None
+        self.audio_thread = threading.Thread(target=self.update_graph)
+        self.audio_thread.daemon = True
+        self.audio_thread.start()
+        self.load_slider_positions()
+    # Dentro da classe MicrophoneGraphApp
+    def update_wave_zoom(self):
+        zoom_factor = self.wave_zoom_slider.get()  # Obter o fator de zoom selecionado pelo usuário
+        self.ax.set_ylim([-32768 / zoom_factor, 32767 / zoom_factor])  # Aplicar o zoom na onda
+        self.canvas.draw()  # Redesenhar o gráfico
+        
+    def start_stream(self):
+        self.p = pyaudio.PyAudio()
+        self.stream = self.p.open(format=pyaudio.paInt16,
+                                  channels=2,
+                                  rate=60000,
+                                  input=True,
+                                  frames_per_buffer=1024)
     
     
     
+    
+    
+    def save_slider_positions(self):
+        positions = {
+            "gain": self.gain.get(),
+            "calibration": self.calibration.get(),
+            "offset": self.offset.get(),
+            "update_interval": self.update_interval.get(),
+            "split_channels": self.split_channels.get(),
+            "show_grid": self.show_grid.get(),
+        }
+        with open("slider_positions.json", "w") as file:
+            json.dump(positions, file)
 
-def save_config():
-    global gain_base, gain_fine, calibrate_gain
-    with open("config.txt", "w") as file:
-        file.write(f"Ganho Base: {gain_base}\n")
-        file.write(f"Ganho Fino: {gain_fine}\n")
-        file.write(f"Calibração do Ganho: {calibrate_gain}\n")
-# Opção para escolher a entrada de áudio
-audio_input_label = ttk.Label(settingsframe, text="Escolher Entrada de Áudio:")
-audio_input_label.pack()
+    def load_slider_positions(self):
+        try:
+            with open("slider_positions.json", "r") as file:
+                positions = json.load(file)
+                self.gain.set(positions["gain"])
+                self.calibration.set(positions["calibration"])
+                self.offset.set(positions["offset"])
+                self.update_interval.set(positions["update_interval"])
+                self.split_channels.set(positions["split_channels"])
+                self.show_grid.set(positions["show_grid"])
+        except FileNotFoundError:
+            pass
+    
+    
+    def update_graph(self):
+        self.start_stream()
+        while True:
+            if not self.paused.get():
+                data = np.frombuffer(self.stream.read(1024), dtype=np.int16).reshape(-1, 2)
+                
+                if self.calibration.get() < 0:
 
-audio_input_options = ["Microfone", "Entrada de Linha", "Outro"]
-audio_input_var = tk.StringVar()
-audio_input_var.set(audio_input_options[0])  # Definindo a opção padrão
+                    p_left_channel = data[:, 0]   /  self.calibration.get()
+                    p_right_channel = data[:, 1] /  self.calibration.get()
+                    left_channel = data[:, 0]   /  self.calibration.get()
+                    right_channel = data[:, 1] /  self.calibration.get()
+                else:
+                    p_left_channel = data[:, 0]   *  self.calibration.get()
+                    p_right_channel = data[:, 1] *  self.calibration.get()
+                    left_channel = data[:, 0]   *  self.calibration.get()
+                    right_channel = data[:, 1] *  self.calibration.get()
 
-audio_input_menu = ttk.OptionMenu(settingsframe, audio_input_var, *audio_input_options)
-audio_input_menu.pack()
 
-# Opção para trocar o tema da interface
-theme_label = ttk.Label(settingsframe, text="Trocar Tema da Interface:")
-theme_label.pack()
+                # Aplicar ganho
+                gain = self.gain.get()
+                left_channel = left_channel * gain
+                right_channel = right_channel * gain
+                left_channel = np.clip(left_channel, -32768, 32767)
+                right_channel = np.clip(right_channel, -32768, 32767)
 
-def change_theme():
-    current_theme = root.tk.call("ttk::style", "theme", "use")
-    new_theme = "clam" if current_theme == "default" else "default"
-    root.tk.call("ttk::style", "theme", "use", new_theme)
+                # Atualizar dados dos gráficos
+                if self.split_channels.get():
+                    self.y_left = np.roll(self.y_left, -1024)
+                    self.y_right = np.roll(self.y_right, -1024)
+                    self.y_left[-1024:] = left_channel
+                    self.y_right[-1024:] = right_channel
+                else:
+                    mixed_channel = (left_channel + right_channel) / 2
+                    self.y_left = np.roll(self.y_left, -1024)
+                    self.y_right = np.roll(self.y_right, -1024)
+                    self.y_left[-1024:] = mixed_channel
+                    self.y_right[-1024:] = mixed_channel
 
-def site():
-    webbrowser.open("https://valdemir-rs.rf.gd/")
+                # Aplicar offset de separação
+                offset = self.offset.get()
+                self.line_left.set_ydata(self.y_left + offset)
+                self.line_right.set_ydata(self.y_right - offset)
+                self.ax.set_ylim([-32768 - offset, 32767 + offset])
+                self.canvas.draw()
 
-theme_button = ttk.Button(settingsframe, text="Alternar Tema", command=change_theme)
-theme_button.pack()
-theme_button2 = ttk.Button(settingsframe, text="Visite meu site!", command=site)
-theme_button2.pack()
+                # Calcular frequência dominante
+                fft_result = np.fft.fft(left_channel)
+                fft_freq = np.fft.fftfreq(len(left_channel), 1/44100)
+                idx = np.argmax(np.abs(fft_result))
+                freq = abs(fft_freq[idx]) * 1.44
+                level = np.abs(fft_result[idx]) / len(p_left_channel)
+                fft_result_original = np.fft.fft(p_left_channel)
+                idx_original = np.argmax(np.abs(fft_result_original))
+                level_original = np.abs(fft_result_original[idx_original]) / len(p_left_channel)
 
-# Configuração do ganho de calibração
-calibrate_gain_label = ttk.Label(settingsframe, text="Calibração do Ganho:")
-calibrate_gain_label.pack()
-calibrate_gain_label_desc = ttk.Label(settingsframe, text='''
-    Com ela você vai poder definir o ponto base do início de 
-    medição porque cada placa de áudio tem uma estrutura de ganho
-    diferente. Aqui você pode fazer a calibragem do ponto zero.
-''')
-def load_config():
-    try:
-        with open("config.txt", "r") as file:
-            return int(file.read())
-    except FileNotFoundError:
-        return 0
-calibrate_gain_label_desc.pack()
-calibrate_gain_var = tk.DoubleVar()
-calibrate_gain_var.set(load_config())
-calibrate_gain_scale = ttk.Scale(settingsframe, orient=tk.HORIZONTAL, length=400, from_=-1, to_=4, command=set_calibrate_gain, variable=calibrate_gain_var)
-calibrate_gain_scale.pack()
-calibrate_gain_scale.config(command=lambda value: (set_calibrate_gain(value), update_calibrate_gain_value(value)))
-# Função para ajustar o número de canais (CHANNELS)
-def set_channels(value):
-    global CHANNELS
-    CHANNELS = int(value)
-    print(f"Número de Canais: {CHANNELS}")
+                # Mostrar posições dos sliders e informações de frequência e nível
+                update_interval = self.update_interval.get()
+                self.update_listbox.delete(0, tk.END)
+                self.update_listbox.insert(tk.END, f"zoom: {gain:.2f} X")
+                self.update_listbox.insert(tk.END, f"Separação das Linhas: {offset:.2f}")
+                self.update_listbox.insert(tk.END, f"Tempo de Atualização: {update_interval:.2f} s")
+                self.update_listbox.insert(tk.END, f"Frequência: {freq:.2f} Hz")
+                self.update_listbox.insert(tk.END, f"Nível: {level_original/1000:.2f} V")
+                self.update_listbox.insert(tk.END, f"escala em milissegundos 1000 = 1 segundo")
+                self.update_listbox.insert(tk.END, f"Ponto de calibragem {self.calibration.get()}")
 
-# Função para ajustar a taxa de amostragem (RATE)
-def set_rate(value):
-    global RATE
-    RATE = int(value)
-    print(f"Taxa de Amostragem (RATE): {RATE}")
 
-# Função para ajustar o tamanho do buffer (CHUNK)
-def set_chunk(value):
-    global CHUNK
-    CHUNK = int(value)
-    print(f"Tamanho do Buffer (CHUNK): {CHUNK}")
+            time.sleep(self.update_interval.get())
 
-# Label para mostrar o valor do slide de calibração na Label
-calibrate_gain_value_label = ttk.Label(settingsframe, text="Valor do Slide de Calibração:")
-calibrate_gain_value_label.pack()
-# Slider para ajustar o número de canais (CHANNELS)
-channels_label = ttk.Label(settingsframe, text="Número de Canais:")
-channels_label.pack()
-channels_slider = tk.Scale(settingsframe, orient=tk.HORIZONTAL, length=200, from_=1, to=2, command=set_channels)
-channels_slider.pack()
+    def toggle_pause(self):
+        if self.paused.get():
+            self.paused.set(False)
+            self.pause_button.config(text="Pausar")
+        else:
+            self.paused.set(True)
+            self.pause_button.config(text="Despausar")
 
-# Slider para ajustar a taxa de amostragem (RATE)
-rate_label = ttk.Label(settingsframe, text="Taxa de Amostragem (RATE):")
-rate_label.pack()
-rate_slider = ttk.Scale(settingsframe, orient=tk.HORIZONTAL, length=200, from_=22050, to=44100, command=set_rate)
-rate_slider.pack()
+    def abrir_gerador(self):
+            print("oiss")
+            self.janela_gerador = tk.Toplevel(self.root)
+            self.janela_gerador.title("Gerador de Frequências")
 
-# Slider para ajustar o tamanho do buffer (CHUNK)
-chunk_label = ttk.Label(settingsframe, text="Tamanho do Buffer (CHUNK):")
-chunk_label.pack()
-chunk_slider = ttk.Scale(settingsframe, orient=tk.HORIZONTAL, length=200, from_=256, to=1024, command=set_chunk)
-chunk_slider.pack()
+            # Iniciar a classe GeradorFrequencias na nova janela
+            self.gerador = GeradorFrequencias(self.janela_gerador)
+    def toggle_grid(self):
+        self.ax.grid(self.show_grid.get())
+        self.canvas.draw()
+        
 
-# Botão para congelar o gráfico
-freeze_button = ttk.Button(mainframe, text="Congelar Gráfico",command=freeze_graph)
-freeze_button.grid(column=1, row=4, sticky=tk.W)
+    def on_closing(self):
+        if self.stream is not None:
+            self.stream.stop_stream()
+            self.stream.close()
+            self.p.terminate()
+            self.save_slider_positions()
+        self.root.destroy()
 
-# Botão para exportar o gráfico como PNG
-export_button = ttk.Button(mainframe, text="Exportar PNG")
-export_button.grid(column=2, row=4, sticky=tk.W)
-export_button.config(command=export_png)
-
-# Configuração do gráfico
-fig, ax = plt.subplots()
-x = np.arange(0, 2 * CHUNK, 2)
-line, = ax.plot(x, np.random.rand(CHUNK))
-extra_line, = ax.plot(x, np.zeros(CHUNK))  # Adiciona uma linha extra
-extra_line_var = tk.IntVar(value=0)  # Variável para controlar se a linha extra será mostrada ou não
-
-# Função de atualização para o gráfico
-
-ax.set_ylim(-2**15, 2**15)
-ax.set_xlim(0, CHUNK)
-
-canvas = FigureCanvasTkAgg(fig, master=mainframe)
-canvas.get_tk_widget()
-canvas.draw()
-canvas.get_tk_widget().grid(column=1, row=3, columnspan=3)
-
-ani = animation.FuncAnimation(fig, update, blit=True)
-
-# Adicionando a caixa de marcação para a linha extra
-extra_line_var = tk.IntVar(value=0)  # Variável para controlar se a linha extra será mostrada ou não
-extra_line_check = ttk.Checkbutton(mainframe, text="Separar os lados em 2 linhas", variable=extra_line_var)
-extra_line_check.grid(column=4, row=4, sticky=tk.W)
-
-# Iniciar a captura de áudio em uma thread separada
-audio_thread = threading.Thread(target=audio_capture)
-audio_thread.daemon = True  # A thread será encerrada quando o programa principal encerrar
-audio_thread.start()
-
-# Fechando o stream e PyAudio ao encerrar o gráfico
-def close(event):
-    audio.terminate()
-
-    # Salvar a configuração ao fechar
-    with open("config.txt", "w") as file:
-        file.write(str(calibrate_gain))
-
-fig.canvas.mpl_connect('close_event', close)
-
-# Rodando a interface tk
-root.mainloop()
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = MicrophoneGraphApp(root)
+    root.protocol("WM_DELETE_WINDOW", app.on_closing)
+    root.mainloop()
